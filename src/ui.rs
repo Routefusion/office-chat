@@ -1,7 +1,7 @@
 use std::io::{self, Stdout, Write};
 
 use crossterm::cursor::{self, MoveTo};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use crossterm::style::{Color, Print, SetForegroundColor, ResetColor};
 use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, queue};
@@ -120,21 +120,6 @@ impl Ui {
         self.stdout.flush().ok();
     }
 
-    /// Poll for a key event with a timeout. Returns None on timeout.
-    pub fn poll_key(&mut self, timeout: std::time::Duration) -> Option<KeyEvent> {
-        if event::poll(timeout).unwrap_or(false) {
-            match event::read() {
-                Ok(Event::Key(key)) => return Some(key),
-                Ok(Event::Resize(_, _)) => {
-                    self.render();
-                    return None;
-                }
-                _ => return None,
-            }
-        }
-        None
-    }
-
     /// Handle a keystroke. Returns Some(line) if Enter was pressed.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<String> {
         match key.code {
@@ -152,10 +137,6 @@ impl Ui {
                 self.input_buf.pop();
                 self.render();
                 None
-            }
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Signal handled externally
-                Some("\x03".to_string())
             }
             KeyCode::Char(c) => {
                 self.input_buf.push(c);

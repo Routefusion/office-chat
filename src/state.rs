@@ -48,6 +48,10 @@ impl PeerState {
         self.peers.remove(pubkey);
     }
 
+    pub fn nicknames(&self) -> Vec<String> {
+        self.peers.values().map(|p| p.nickname.clone()).collect()
+    }
+
     pub fn color_for(&self, pubkey: &[u8; 32]) -> Color {
         self.peers
             .get(pubkey)

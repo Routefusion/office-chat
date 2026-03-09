@@ -1,5 +1,6 @@
 mod crypto;
 mod history;
+mod lore;
 mod net;
 mod protocol;
 mod state;
@@ -11,10 +12,14 @@ use std::time::Duration;
 
 use chrono::Utc;
 use clap::Parser;
+use crossterm::event::{Event, EventStream, KeyCode, KeyModifiers};
+use rand::Rng;
 use ed25519_dalek::SigningKey;
+use futures::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::history::HistoryEntry;
+use crate::lore::Lore;
 use crate::net::IncomingMessage;
 use crate::protocol::{Message, MAX_TEXT_LEN};
 use crate::state::PeerState;
@@ -169,63 +174,104 @@ async fn main() {
     ));
     ui.render();
 
-    // Main input loop
+    // Async event stream for crossterm
+    let mut term_events = EventStream::new();
+
+    // Lore system
+    let mut lore = Lore::new();
+    let mut lore_timer = tokio::time::interval(Duration::from_secs(lore.next_delay_secs()));
+    // Skip the first immediate tick
+    lore_timer.tick().await;
+
+    // Main loop: select between network messages, terminal events, and lore
     loop {
-        // Check for incoming network messages (non-blocking drain)
-        while let Ok(incoming) = rx.try_recv() {
-            handle_incoming(&mut ui, &mut peers, &history_path, incoming);
-        }
+        tokio::select! {
+            Some(incoming) = rx.recv() => {
+                handle_incoming(&mut ui, &mut peers, &history_path, incoming);
+            }
+            Some(Ok(event)) = term_events.next() => {
+                match event {
+                    Event::Key(key) => {
+                        // Ctrl+C
+                        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                            let msg = Message::Leave { nickname: nick.clone() };
+                            net::send_message(&socket, &sym_key, &signing_key, &msg).await;
+                            break;
+                        }
 
-        // Poll for keystrokes (50ms timeout so we keep checking network)
-        if let Some(key) = ui.poll_key(Duration::from_millis(50)) {
-            if let Some(line) = ui.handle_key(key) {
-                if line == "\x03" {
-                    // Ctrl+C — send Leave and exit
-                    let msg = Message::Leave {
-                        nickname: nick.clone(),
-                    };
-                    net::send_message(&socket, &sym_key, &signing_key, &msg).await;
-                    break;
+                        if let Some(line) = ui.handle_key(key) {
+                            // Handle lore commands
+                            if line == "/fight" {
+                                if let Some(result) = lore.handle_fight() {
+                                    ui.push_system(&result);
+                                } else {
+                                    ui.push_system("There is nothing to fight. For now.");
+                                }
+                                continue;
+                            }
+                            if line == "/flee" {
+                                if let Some(result) = lore.handle_flee() {
+                                    ui.push_system(&result);
+                                } else {
+                                    ui.push_system("You flee from nothing. Cowardice noted.");
+                                }
+                                continue;
+                            }
+
+                            if line.len() > MAX_TEXT_LEN {
+                                ui.push_system(&format!(
+                                    "Message too long ({} bytes, max {MAX_TEXT_LEN})",
+                                    line.len()
+                                ));
+                                continue;
+                            }
+
+                            let now = Utc::now().timestamp();
+                            let ts = Utc::now().format("%H:%M").to_string();
+
+                            let msg = Message::Chat {
+                                nickname: nick.clone(),
+                                text: line.clone(),
+                                timestamp: now,
+                            };
+                            net::send_message(&socket, &sym_key, &signing_key, &msg).await;
+
+                            let own_color = peers.color_for(&own_pubkey);
+                            ui.push_line(&format!("[{ts}] {}", nick), own_color, &line);
+
+                            history::append(
+                                &history_path,
+                                &HistoryEntry {
+                                    timestamp: now,
+                                    nickname: nick.clone(),
+                                    text: line,
+                                },
+                            );
+                        }
+                    }
+                    Event::Resize(_, _) => {
+                        ui.render();
+                    }
+                    _ => {}
                 }
-
-                // Validate length
-                if line.len() > MAX_TEXT_LEN {
-                    ui.push_system(&format!(
-                        "Message too long ({} bytes, max {MAX_TEXT_LEN})",
-                        line.len()
-                    ));
-                    continue;
+            }
+            _ = lore_timer.tick() => {
+                let peer_nicks = peers.nicknames();
+                // 25% chance of encounter, 75% passive event
+                let mut rng = rand::thread_rng();
+                if rng.gen_bool(0.25) {
+                    let msg = lore.spawn_encounter();
+                    ui.push_system(&msg);
+                } else {
+                    let event = lore.random_event(&peer_nicks);
+                    ui.push_system(&event);
                 }
-
-                let now = Utc::now().timestamp();
-                let ts = Utc::now().format("%H:%M").to_string();
-
-                // Send chat message
-                let msg = Message::Chat {
-                    nickname: nick.clone(),
-                    text: line.clone(),
-                    timestamp: now,
-                };
-                net::send_message(&socket, &sym_key, &signing_key, &msg).await;
-
-                // Display own message
-                let own_color = peers.color_for(&own_pubkey);
-                ui.push_line(&format!("[{ts}] {}", nick), own_color, &line);
-
-                // Save to history
-                history::append(
-                    &history_path,
-                    &HistoryEntry {
-                        timestamp: now,
-                        nickname: nick.clone(),
-                        text: line,
-                    },
-                );
+                // Randomize next interval
+                lore_timer = tokio::time::interval(Duration::from_secs(lore.next_delay_secs()));
+                lore_timer.tick().await; // skip immediate tick
             }
         }
     }
-
-    // Cleanup handled by Ui::drop
 }
 
 fn handle_incoming(
