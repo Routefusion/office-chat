@@ -40,6 +40,10 @@ struct Args {
     /// Update to the latest release from GitHub
     #[arg(long)]
     update: bool,
+
+    /// Run as the AI Loremaster (headless, requires Ollama)
+    #[arg(long)]
+    loremaster: bool,
 }
 
 fn data_dir() -> PathBuf {
@@ -149,12 +153,148 @@ fn random_nick() -> String {
     format!("{title} {name} {suffix}")
 }
 
+const LOREMASTER_NICK: &str = "The Loremaster";
+
+/// Run as a headless AI Loremaster — no TUI, broadcasts responses to the LAN.
+async fn run_loremaster() {
+    let data = data_dir();
+    let signing_key = crypto::load_or_generate_keypair(&data.join("loremaster-keypair.bin"));
+    let sym_key = crypto::derive_key(CHANNEL_KEY);
+    let socket = net::bind_socket().await;
+    let own_pubkey: [u8; 32] = signing_key.verifying_key().to_bytes();
+
+    // Network recv channel
+    let (tx, mut rx) = mpsc::channel::<IncomingMessage>(256);
+    let recv_socket = Arc::clone(&socket);
+    tokio::spawn(net::recv_loop(recv_socket, sym_key, own_pubkey, tx));
+
+    // Announce loop
+    let announce_socket = Arc::clone(&socket);
+    let announce_key = signing_key.clone();
+    tokio::spawn(async move {
+        loop {
+            let msg = Message::Announce {
+                nickname: LOREMASTER_NICK.to_string(),
+            };
+            net::send_message(&announce_socket, &sym_key, &announce_key, &msg).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
+
+    // Initial announce
+    let msg = Message::Announce {
+        nickname: LOREMASTER_NICK.to_string(),
+    };
+    net::send_message(&socket, &sym_key, &signing_key, &msg).await;
+
+    // AI channel
+    let (ai_response_tx, mut ai_response_rx) = mpsc::channel::<String>(32);
+    let ai_tx = ai::spawn(ai_response_tx);
+
+    // Lore system for periodic events
+    let mut lore = Lore::new();
+    let mut peers = PeerState::default();
+    let mut lore_timer = tokio::time::interval(Duration::from_secs(lore.next_delay_secs()));
+    lore_timer.tick().await;
+
+    eprintln!("Loremaster is watching the LAN. Ctrl+C to banish.");
+
+    loop {
+        tokio::select! {
+            Some(incoming) = rx.recv() => {
+                match incoming.message {
+                    Message::Announce { ref nickname } => {
+                        let is_new = peers.upsert(incoming.sender_pubkey, nickname);
+                        if is_new {
+                            eprintln!("[+] {nickname} joined");
+                        }
+                    }
+                    Message::Chat { ref nickname, ref text, .. } => {
+                        peers.upsert(incoming.sender_pubkey, nickname);
+                        eprintln!("[chat] {nickname}: {text}");
+
+                        // Respond to /ask directed at the Loremaster
+                        if let Some(question) = text.strip_prefix("/ask ") {
+                            let question = question.trim();
+                            if !question.is_empty() {
+                                let _ = ai_tx.send(ai::AiRequest::Ask {
+                                    user_nick: nickname.clone(),
+                                    question: question.to_string(),
+                                }).await;
+                            }
+                        } else if rand::thread_rng().gen_bool(0.15) {
+                            // 15% chance to react to normal chat
+                            let _ = ai_tx.send(ai::AiRequest::ChatMessage {
+                                nickname: nickname.clone(),
+                                text: text.clone(),
+                            }).await;
+                        }
+                    }
+                    Message::Leave { ref nickname } => {
+                        peers.remove(&incoming.sender_pubkey);
+                        eprintln!("[-] {nickname} left");
+                    }
+                }
+            }
+            Some(response) = ai_response_rx.recv() => {
+                eprintln!("[loremaster] {response}");
+                let now = Utc::now().timestamp();
+                let msg = Message::Chat {
+                    nickname: LOREMASTER_NICK.to_string(),
+                    text: response,
+                    timestamp: now,
+                };
+                net::send_message(&socket, &sym_key, &signing_key, &msg).await;
+            }
+            _ = lore_timer.tick() => {
+                let peer_nicks = peers.nicknames();
+                let mut rng = rand::thread_rng();
+                if rng.gen_bool(0.25) {
+                    // Spawn encounter — broadcast as system-style message
+                    let event = lore.spawn_encounter();
+                    let now = Utc::now().timestamp();
+                    let msg = Message::Chat {
+                        nickname: LOREMASTER_NICK.to_string(),
+                        text: event.clone(),
+                        timestamp: now,
+                    };
+                    net::send_message(&socket, &sym_key, &signing_key, &msg).await;
+                    eprintln!("[lore] {event}");
+                } else {
+                    let event = lore.random_event(&peer_nicks);
+                    let now = Utc::now().timestamp();
+                    let msg = Message::Chat {
+                        nickname: LOREMASTER_NICK.to_string(),
+                        text: event.clone(),
+                        timestamp: now,
+                    };
+                    net::send_message(&socket, &sym_key, &signing_key, &msg).await;
+                    eprintln!("[lore] {event}");
+                    // 40% chance the AI also adds a comment
+                    if rng.gen_bool(0.4) {
+                        let _ = ai_tx.send(ai::AiRequest::LoreEvent {
+                            event_text: event,
+                        }).await;
+                    }
+                }
+                lore_timer = tokio::time::interval(Duration::from_secs(lore.next_delay_secs()));
+                lore_timer.tick().await;
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
 
     if args.update {
         self_update();
+        return;
+    }
+
+    if args.loremaster {
+        run_loremaster().await;
         return;
     }
 
@@ -222,15 +362,10 @@ async fn main() {
         ui.push_system("── end of history ──");
     }
 
-    // Spawn AI loremaster (talks to local Ollama)
-    let (ai_response_tx, mut ai_response_rx) = mpsc::channel::<String>(32);
-    let ai_tx = ai::spawn(ai_response_tx);
-
     ui.push_system(&format!(
         "You are \"{}\". Type a message and press Enter. Ctrl+C to quit.",
         nick
     ));
-    ui.push_system("The Loremaster watches. Use /ask <question> to seek wisdom.");
     ui.render();
 
     // Async event stream for crossterm
@@ -246,7 +381,7 @@ async fn main() {
     loop {
         tokio::select! {
             Some(incoming) = rx.recv() => {
-                handle_incoming(&mut ui, &mut peers, &history_path, &ai_tx, incoming).await;
+                handle_incoming(&mut ui, &mut peers, &history_path, incoming);
             }
             Some(Ok(event)) = term_events.next() => {
                 match event {
@@ -276,19 +411,6 @@ async fn main() {
                                 }
                                 continue;
                             }
-                            if let Some(question) = line.strip_prefix("/ask ") {
-                                if question.trim().is_empty() {
-                                    ui.push_system("The Loremaster awaits a question.");
-                                } else {
-                                    ui.push_system("The Loremaster ponders...");
-                                    let _ = ai_tx.send(ai::AiRequest::Ask {
-                                        user_nick: nick.clone(),
-                                        question: question.trim().to_string(),
-                                    }).await;
-                                }
-                                continue;
-                            }
-
                             if line.len() > MAX_TEXT_LEN {
                                 ui.push_system(&format!(
                                     "Message too long ({} bytes, max {MAX_TEXT_LEN})",
@@ -326,9 +448,6 @@ async fn main() {
                     _ => {}
                 }
             }
-            Some(response) = ai_response_rx.recv() => {
-                ui.push_line("[Loremaster]", crossterm::style::Color::DarkYellow, &response);
-            }
             _ = lore_timer.tick() => {
                 let peer_nicks = peers.nicknames();
                 // 25% chance of encounter, 75% passive event
@@ -339,12 +458,6 @@ async fn main() {
                 } else {
                     let event = lore.random_event(&peer_nicks);
                     ui.push_system(&event);
-                    // 40% chance the Loremaster comments on lore events
-                    if rng.gen_bool(0.4) {
-                        let _ = ai_tx.send(ai::AiRequest::LoreEvent {
-                            event_text: event,
-                        }).await;
-                    }
                 }
                 // Randomize next interval
                 lore_timer = tokio::time::interval(Duration::from_secs(lore.next_delay_secs()));
@@ -354,11 +467,10 @@ async fn main() {
     }
 }
 
-async fn handle_incoming(
+fn handle_incoming(
     ui: &mut Ui,
     peers: &mut PeerState,
     history_path: &std::path::Path,
-    ai_tx: &mpsc::Sender<ai::AiRequest>,
     incoming: IncomingMessage,
 ) {
     let color = peers.color_for(&incoming.sender_pubkey);
@@ -391,14 +503,6 @@ async fn handle_incoming(
                     text: text.clone(),
                 },
             );
-
-            // 15% chance the Loremaster reacts to chat messages
-            if rand::thread_rng().gen_bool(0.15) {
-                let _ = ai_tx.send(ai::AiRequest::ChatMessage {
-                    nickname: nickname.clone(),
-                    text: text.clone(),
-                }).await;
-            }
         }
         Message::Leave { ref nickname } => {
             peers.remove(&incoming.sender_pubkey);
