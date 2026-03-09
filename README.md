@@ -35,21 +35,28 @@ cp target/release/office-chat /usr/local/bin/
 ## Usage
 
 ```bash
-office-chat --nick alice --passphrase "correct horse battery staple"
+office-chat
 ```
 
-On another machine (same LAN):
+That's it. You'll be prompted for a nickname, and a random passphrase is generated and saved automatically. Share the passphrase with others so they can join:
 
 ```bash
-office-chat --nick bob --passphrase "correct horse battery staple"
+# On another machine (same LAN), use the same passphrase:
+office-chat --passphrase "alpha-castle-ember-walrus"
+```
+
+You can also skip the prompt with flags:
+
+```bash
+office-chat --nick alice --passphrase "alpha-castle-ember-walrus"
 ```
 
 ### Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--nick`, `-n` | required | Your display name |
-| `--passphrase`, `-p` | required | Shared secret for encryption |
+| `--nick`, `-n` | prompted | Your display name |
+| `--passphrase`, `-p` | auto-generated | Shared secret for encryption (saved to `~/.office-chat/passphrase`) |
 | `--history` | `50` | Number of history messages to load on startup |
 
 ### Controls
@@ -98,6 +105,7 @@ Stored in `~/.office-chat/`:
 | File | Purpose |
 |------|---------|
 | `keypair.bin` | Ed25519 signing key (generated on first run) |
+| `passphrase` | Shared passphrase (generated on first run if not provided) |
 | `history.jsonl` | Local message history (append-only, unencrypted) |
 
 ## Architecture
