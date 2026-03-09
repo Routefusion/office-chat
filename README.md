@@ -28,8 +28,7 @@ brew install office-chat
 ```bash
 git clone https://github.com/routefusion/office-chat.git
 cd office-chat
-cargo build --release
-cp target/release/office-chat /usr/local/bin/
+cargo install --path .
 ```
 
 ## Usage
