@@ -262,14 +262,16 @@ async fn run_loremaster() {
                 }
             }
             Some(response) = ai_response_rx.recv() => {
-                eprintln!("[loremaster] {response}");
                 let now = Utc::now().timestamp();
                 let msg = Message::Chat {
                     nickname: LOREMASTER_NICK.to_string(),
-                    text: response,
+                    text: response.clone(),
                     timestamp: now,
                 };
                 net::send_message(&socket, &sym_key, &signing_key, &msg).await;
+                eprintln!("[loremaster] sent: {response}");
+                // Small delay to avoid UDP packet loss from rapid-fire sends
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
             _ = lore_timer.tick() => {
                 let peer_nicks = peers.nicknames();

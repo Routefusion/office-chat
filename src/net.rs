@@ -51,7 +51,9 @@ pub async fn send_message(
 
     let data = packet.encode();
     let dest: SocketAddr = format!("{BROADCAST_ADDR}:{PORT}").parse().unwrap();
-    let _ = socket.send_to(&data, dest).await;
+    if let Err(e) = socket.send_to(&data, dest).await {
+        eprintln!("[net] send failed ({} bytes): {e}", data.len());
+    }
 }
 
 /// Event from the network recv loop.

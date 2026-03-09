@@ -85,7 +85,14 @@ pub fn spawn(ui_tx: mpsc::Sender<String>) -> mpsc::Sender<AiRequest> {
             match client.post(OLLAMA_URL).json(&body).send().await {
                 Ok(resp) => {
                     if let Ok(parsed) = resp.json::<OllamaResponse>().await {
-                        let text = parsed.response.trim().to_string();
+                        let mut text = parsed.response.trim().to_string();
+                        // Truncate to fit UDP packet after encryption overhead
+                        if text.len() > 800 {
+                            text.truncate(800);
+                            if let Some(end) = text.rfind(". ") {
+                                text.truncate(end + 1);
+                            }
+                        }
                         if !text.is_empty() {
                             let _ = ui_tx.send(text).await;
                         }
