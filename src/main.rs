@@ -35,12 +35,59 @@ struct Args {
     /// Number of history messages to load on startup
     #[arg(long, default_value = "50")]
     history: usize,
+
+    /// Update to the latest release from GitHub
+    #[arg(long)]
+    update: bool,
 }
 
 fn data_dir() -> PathBuf {
     dirs::home_dir()
         .expect("no home directory")
         .join(".office-chat")
+}
+
+const RELEASE_URL: &str =
+    "https://github.com/Routefusion/office-chat/releases/latest/download/office-chat";
+
+fn self_update() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let current_exe = std::env::current_exe().expect("cannot determine current executable path");
+
+    println!("Downloading latest release...");
+
+    let tmp = current_exe.with_extension("tmp");
+
+    let status = Command::new("curl")
+        .args(["-fSL", RELEASE_URL, "-o"])
+        .arg(&tmp)
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            let _ = fs::remove_file(&tmp);
+            eprintln!("Download failed (exit {}).", s.code().unwrap_or(-1));
+            std::process::exit(1);
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            eprintln!("Failed to run curl: {e}");
+            std::process::exit(1);
+        }
+    }
+
+    // Make executable
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
+        .expect("failed to set permissions");
+
+    // Replace current binary
+    fs::rename(&tmp, &current_exe).expect("failed to replace binary");
+
+    println!("Updated! Restart office-chat to use the new version.");
 }
 
 /// Generate a chaotic lore nickname.
@@ -104,6 +151,12 @@ fn random_nick() -> String {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+
+    if args.update {
+        self_update();
+        return;
+    }
+
     let data = data_dir();
 
     // Generate a random lore nickname
