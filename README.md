@@ -1,6 +1,6 @@
 # office-chat
 
-Encrypted LAN chat over UDP broadcast. Zero infrastructure — just a shared passphrase and a local network.
+LAN chat over UDP broadcast. Zero infrastructure, zero config — just run it and talk to anyone on the same network.
 
 ```
 ┌──────────────────────────────────────────┐
@@ -38,17 +38,12 @@ cp target/release/office-chat /usr/local/bin/
 office-chat
 ```
 
-That's it. You'll be prompted for a nickname, and a random passphrase is generated and saved automatically. Share the passphrase with others so they can join:
+That's it. You'll be prompted for a nickname and you're in. Anyone else on the same LAN running `office-chat` sees your messages.
+
+Skip the prompt with a flag:
 
 ```bash
-# On another machine (same LAN), use the same passphrase:
-office-chat --passphrase "alpha-castle-ember-walrus"
-```
-
-You can also skip the prompt with flags:
-
-```bash
-office-chat --nick alice --passphrase "alpha-castle-ember-walrus"
+office-chat --nick alice
 ```
 
 ### Options
@@ -56,7 +51,6 @@ office-chat --nick alice --passphrase "alpha-castle-ember-walrus"
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--nick`, `-n` | prompted | Your display name |
-| `--passphrase`, `-p` | auto-generated | Shared secret for encryption (saved to `~/.office-chat/passphrase`) |
 | `--history` | `50` | Number of history messages to load on startup |
 
 ### Controls
@@ -66,13 +60,11 @@ office-chat --nick alice --passphrase "alpha-castle-ember-walrus"
 
 ## How it works
 
-### Encryption
+### Signing & Encoding
 
-1. Shared passphrase → **Argon2id** → 32-byte symmetric key
-2. Each message encrypted with **ChaCha20-Poly1305** AEAD
-3. Each user has an **Ed25519** keypair (generated on first run) — every message is signed to prevent spoofing
-
-One encrypted packet per message, not N copies. Practical for broadcast UDP.
+- Each user has an **Ed25519** keypair (generated on first run) — every message is signed to prevent spoofing
+- Messages are encoded with **ChaCha20-Poly1305** using a fixed key (prevents casual packet sniffing, not a security boundary)
+- The real access control is your LAN — if you're on the network, you're in
 
 ### Transport
 
@@ -105,8 +97,7 @@ Stored in `~/.office-chat/`:
 | File | Purpose |
 |------|---------|
 | `keypair.bin` | Ed25519 signing key (generated on first run) |
-| `passphrase` | Shared passphrase (generated on first run if not provided) |
-| `history.jsonl` | Local message history (append-only, unencrypted) |
+| `history.jsonl` | Local message history (append-only) |
 
 ## Architecture
 
