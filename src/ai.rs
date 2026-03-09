@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 const OLLAMA_URL: &str = "http://localhost:11434/api/generate";
-const MODEL: &str = "llama3.2";
+const MODEL: &str = "llama3.1:8b";
 
 const SYSTEM_PROMPT: &str = r#"You are the Loremaster — a deranged, dramatic narrator who haunts an office LAN chat. You speak in the voice of a fantasy dungeon master who has completely lost the plot. The chat users have absurd medieval nicknames like "Baron Kragmire Eater of Bees" and "Sir Fumblor the Moist."
 
