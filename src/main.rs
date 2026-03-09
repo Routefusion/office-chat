@@ -1,3 +1,4 @@
+mod ai;
 mod crypto;
 mod history;
 mod lore;
@@ -221,10 +222,15 @@ async fn main() {
         ui.push_system("── end of history ──");
     }
 
+    // Spawn AI loremaster (talks to local Ollama)
+    let (ai_response_tx, mut ai_response_rx) = mpsc::channel::<String>(32);
+    let ai_tx = ai::spawn(ai_response_tx);
+
     ui.push_system(&format!(
         "You are \"{}\". Type a message and press Enter. Ctrl+C to quit.",
         nick
     ));
+    ui.push_system("The Loremaster watches. Use /ask <question> to seek wisdom.");
     ui.render();
 
     // Async event stream for crossterm
@@ -240,7 +246,7 @@ async fn main() {
     loop {
         tokio::select! {
             Some(incoming) = rx.recv() => {
-                handle_incoming(&mut ui, &mut peers, &history_path, incoming);
+                handle_incoming(&mut ui, &mut peers, &history_path, &ai_tx, incoming).await;
             }
             Some(Ok(event)) = term_events.next() => {
                 match event {
@@ -267,6 +273,18 @@ async fn main() {
                                     ui.push_system(&result);
                                 } else {
                                     ui.push_system("You flee from nothing. Cowardice noted.");
+                                }
+                                continue;
+                            }
+                            if let Some(question) = line.strip_prefix("/ask ") {
+                                if question.trim().is_empty() {
+                                    ui.push_system("The Loremaster awaits a question.");
+                                } else {
+                                    ui.push_system("The Loremaster ponders...");
+                                    let _ = ai_tx.send(ai::AiRequest::Ask {
+                                        user_nick: nick.clone(),
+                                        question: question.trim().to_string(),
+                                    }).await;
                                 }
                                 continue;
                             }
@@ -308,6 +326,9 @@ async fn main() {
                     _ => {}
                 }
             }
+            Some(response) = ai_response_rx.recv() => {
+                ui.push_line("[Loremaster]", crossterm::style::Color::DarkYellow, &response);
+            }
             _ = lore_timer.tick() => {
                 let peer_nicks = peers.nicknames();
                 // 25% chance of encounter, 75% passive event
@@ -318,6 +339,12 @@ async fn main() {
                 } else {
                     let event = lore.random_event(&peer_nicks);
                     ui.push_system(&event);
+                    // 40% chance the Loremaster comments on lore events
+                    if rng.gen_bool(0.4) {
+                        let _ = ai_tx.send(ai::AiRequest::LoreEvent {
+                            event_text: event,
+                        }).await;
+                    }
                 }
                 // Randomize next interval
                 lore_timer = tokio::time::interval(Duration::from_secs(lore.next_delay_secs()));
@@ -327,10 +354,11 @@ async fn main() {
     }
 }
 
-fn handle_incoming(
+async fn handle_incoming(
     ui: &mut Ui,
     peers: &mut PeerState,
     history_path: &std::path::Path,
+    ai_tx: &mpsc::Sender<ai::AiRequest>,
     incoming: IncomingMessage,
 ) {
     let color = peers.color_for(&incoming.sender_pubkey);
@@ -363,6 +391,14 @@ fn handle_incoming(
                     text: text.clone(),
                 },
             );
+
+            // 15% chance the Loremaster reacts to chat messages
+            if rand::thread_rng().gen_bool(0.15) {
+                let _ = ai_tx.send(ai::AiRequest::ChatMessage {
+                    nickname: nickname.clone(),
+                    text: text.clone(),
+                }).await;
+            }
         }
         Message::Leave { ref nickname } => {
             peers.remove(&incoming.sender_pubkey);
