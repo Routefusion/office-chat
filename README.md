@@ -16,11 +16,11 @@ LAN chat over UDP broadcast. Zero infrastructure, zero config — just run it an
 
 ## Install
 
-### Homebrew
+### Quick (macOS Apple Silicon)
 
 ```bash
-brew tap routefusion/office-chat
-brew install office-chat
+sudo curl -L https://github.com/routefusion/office-chat/releases/download/v0.1.0/office-chat -o /usr/local/bin/office-chat
+sudo chmod +x /usr/local/bin/office-chat
 ```
 
 ### From source
