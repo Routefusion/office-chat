@@ -38,30 +38,30 @@ const ENCOUNTER_TEMPLATES: &[&str] = &[
 
 /// Fight outcomes (win).
 const FIGHT_WIN: &[&str] = &[
-    "You vanquished the goblin! +3 Honor.",
-    "A mighty blow! The creature flees. +2 Valor.",
-    "You dispatched it with surprising elegance. +4 Prestige.",
-    "The beast is slain. You find 2 copper coins and a damp sock.",
-    "Victory! The goblin drops a USB drive labeled 'do not open.'",
-    "You win! The creature's last words: 'my manager will hear about this.'",
+    "{nick} vanquished the {creature}! +3 Honor.",
+    "A mighty blow from {nick}! The {creature} flees. +2 Valor.",
+    "{nick} dispatched the {creature} with surprising elegance. +4 Prestige.",
+    "{nick} slew the {creature}. Found: 2 copper coins and a damp sock.",
+    "Victory for {nick}! The {creature} drops a USB drive labeled 'do not open.'",
+    "{nick} wins! The {creature}'s last words: 'my manager will hear about this.'",
 ];
 
 /// Fight outcomes (lose).
 const FIGHT_LOSE: &[&str] = &[
-    "The goblin bit your ankle. -2 Dignity.",
-    "You tripped over your own cloak. The goblin laughs. -3 Honor.",
-    "Defeat. The creature steals your lunch. -1 Morale.",
-    "The goblin headbutts you. You see stars and a Jira ticket.",
-    "You lose. The goblin now has admin access.",
+    "The {creature} bit {nick}'s ankle. -2 Dignity.",
+    "{nick} tripped over their own cloak. The {creature} laughs. -3 Honor.",
+    "Defeat for {nick}. The {creature} steals their lunch. -1 Morale.",
+    "The {creature} headbutts {nick}. They see stars and a Jira ticket.",
+    "{nick} loses. The {creature} now has admin access.",
 ];
 
 /// Flee outcomes.
 const FLEE_RESULTS: &[&str] = &[
-    "You fled. The goblin now sits in your chair.",
-    "You escaped! But your dignity did not. -1 Reputation.",
-    "You ran. The creature waves goodbye. It seems disappointed.",
-    "You fled into the supply closet. You live there now.",
-    "Escape successful. The goblin files a complaint with HR.",
+    "{nick} fled. The {creature} now sits in their chair.",
+    "{nick} escaped! But their dignity did not. -1 Reputation.",
+    "{nick} ran. The {creature} waves goodbye. It seems disappointed.",
+    "{nick} fled into the supply closet. They live there now.",
+    "{nick} escaped. The {creature} files a complaint with HR.",
 ];
 
 /// Creatures that can appear in encounters.
@@ -119,19 +119,20 @@ impl Lore {
     }
 
     /// Handle a /fight command. Returns the result message, or None if no encounter.
-    pub fn handle_fight(&mut self) -> Option<String> {
+    pub fn handle_fight(&mut self, who: &str) -> Option<String> {
         match &self.encounter {
             EncounterState::None => None,
             EncounterState::AwaitingResponse { creature } => {
                 let mut rng = rand::thread_rng();
                 let won = rng.gen_bool(0.55);
-                let result = if won {
-                    let msg = FIGHT_WIN[rng.gen_range(0..FIGHT_WIN.len())];
-                    format!("You fought the {creature}! {msg}")
+                let template = if won {
+                    FIGHT_WIN[rng.gen_range(0..FIGHT_WIN.len())]
                 } else {
-                    let msg = FIGHT_LOSE[rng.gen_range(0..FIGHT_LOSE.len())];
-                    format!("You fought the {creature}... {msg}")
+                    FIGHT_LOSE[rng.gen_range(0..FIGHT_LOSE.len())]
                 };
+                let result = template
+                    .replace("{nick}", who)
+                    .replace("{creature}", creature);
                 self.encounter = EncounterState::None;
                 Some(result)
             }
@@ -139,12 +140,15 @@ impl Lore {
     }
 
     /// Handle a /flee command. Returns the result message, or None if no encounter.
-    pub fn handle_flee(&mut self) -> Option<String> {
+    pub fn handle_flee(&mut self, who: &str) -> Option<String> {
         match &self.encounter {
             EncounterState::None => None,
-            EncounterState::AwaitingResponse { .. } => {
+            EncounterState::AwaitingResponse { creature } => {
                 let mut rng = rand::thread_rng();
-                let result = FLEE_RESULTS[rng.gen_range(0..FLEE_RESULTS.len())].to_string();
+                let template = FLEE_RESULTS[rng.gen_range(0..FLEE_RESULTS.len())];
+                let result = template
+                    .replace("{nick}", who)
+                    .replace("{creature}", creature);
                 self.encounter = EncounterState::None;
                 Some(result)
             }

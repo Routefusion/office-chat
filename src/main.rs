@@ -20,7 +20,6 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::history::HistoryEntry;
-use crate::lore::Lore;
 use crate::net::IncomingMessage;
 use crate::protocol::{Message, MAX_TEXT_LEN};
 use crate::state::PeerState;
@@ -157,6 +156,7 @@ const LOREMASTER_NICK: &str = "The Loremaster";
 
 /// Run as a headless AI Loremaster — no TUI, broadcasts responses to the LAN.
 async fn run_loremaster() {
+    use crate::lore::Lore;
     let data = data_dir();
     let signing_key = crypto::load_or_generate_keypair(&data.join("loremaster-keypair.bin"));
     let sym_key = crypto::derive_key(CHANNEL_KEY);
@@ -213,7 +213,7 @@ async fn run_loremaster() {
                         peers.upsert(incoming.sender_pubkey, nickname);
                         eprintln!("[chat] {nickname}: {text}");
 
-                        // Respond to /ask directed at the Loremaster
+                        // Handle commands
                         if let Some(question) = text.strip_prefix("/ask ") {
                             let question = question.trim();
                             if !question.is_empty() {
@@ -222,12 +222,37 @@ async fn run_loremaster() {
                                     question: question.to_string(),
                                 }).await;
                             }
-                        } else if rand::thread_rng().gen_bool(0.15) {
-                            // 15% chance to react to normal chat
-                            let _ = ai_tx.send(ai::AiRequest::ChatMessage {
-                                nickname: nickname.clone(),
-                                text: text.clone(),
-                            }).await;
+                        } else if text == "/fight" {
+                            if let Some(result) = lore.handle_fight(nickname) {
+                                let now = Utc::now().timestamp();
+                                let msg = Message::Chat {
+                                    nickname: LOREMASTER_NICK.to_string(),
+                                    text: result.clone(),
+                                    timestamp: now,
+                                };
+                                net::send_message(&socket, &sym_key, &signing_key, &msg).await;
+                                eprintln!("[lore] {result}");
+                            }
+                        } else if text == "/flee" {
+                            if let Some(result) = lore.handle_flee(nickname) {
+                                let now = Utc::now().timestamp();
+                                let msg = Message::Chat {
+                                    nickname: LOREMASTER_NICK.to_string(),
+                                    text: result.clone(),
+                                    timestamp: now,
+                                };
+                                net::send_message(&socket, &sym_key, &signing_key, &msg).await;
+                                eprintln!("[lore] {result}");
+                            }
+                        } else {
+                            // Always respond if addressed, 15% chance otherwise
+                            let addressed = text.to_lowercase().contains("loremaster");
+                            if addressed || rand::thread_rng().gen_bool(0.15) {
+                                let _ = ai_tx.send(ai::AiRequest::ChatMessage {
+                                    nickname: nickname.clone(),
+                                    text: text.clone(),
+                                }).await;
+                            }
                         }
                     }
                     Message::Leave { ref nickname } => {
@@ -371,13 +396,7 @@ async fn main() {
     // Async event stream for crossterm
     let mut term_events = EventStream::new();
 
-    // Lore system
-    let mut lore = Lore::new();
-    let mut lore_timer = tokio::time::interval(Duration::from_secs(lore.next_delay_secs()));
-    // Skip the first immediate tick
-    lore_timer.tick().await;
-
-    // Main loop: select between network messages, terminal events, and lore
+    // Main loop: network messages and terminal events only
     loop {
         tokio::select! {
             Some(incoming) = rx.recv() => {
@@ -394,23 +413,6 @@ async fn main() {
                         }
 
                         if let Some(line) = ui.handle_key(key) {
-                            // Handle lore commands
-                            if line == "/fight" {
-                                if let Some(result) = lore.handle_fight() {
-                                    ui.push_system(&result);
-                                } else {
-                                    ui.push_system("There is nothing to fight. For now.");
-                                }
-                                continue;
-                            }
-                            if line == "/flee" {
-                                if let Some(result) = lore.handle_flee() {
-                                    ui.push_system(&result);
-                                } else {
-                                    ui.push_system("You flee from nothing. Cowardice noted.");
-                                }
-                                continue;
-                            }
                             if line.len() > MAX_TEXT_LEN {
                                 ui.push_system(&format!(
                                     "Message too long ({} bytes, max {MAX_TEXT_LEN})",
@@ -447,21 +449,6 @@ async fn main() {
                     }
                     _ => {}
                 }
-            }
-            _ = lore_timer.tick() => {
-                let peer_nicks = peers.nicknames();
-                // 25% chance of encounter, 75% passive event
-                let mut rng = rand::thread_rng();
-                if rng.gen_bool(0.25) {
-                    let msg = lore.spawn_encounter();
-                    ui.push_system(&msg);
-                } else {
-                    let event = lore.random_event(&peer_nicks);
-                    ui.push_system(&event);
-                }
-                // Randomize next interval
-                lore_timer = tokio::time::interval(Duration::from_secs(lore.next_delay_secs()));
-                lore_timer.tick().await; // skip immediate tick
             }
         }
     }
