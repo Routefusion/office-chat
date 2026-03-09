@@ -3,15 +3,15 @@
 LAN chat over UDP broadcast. Zero infrastructure, zero config — just run it and talk to anyone on the same network.
 
 ```
-┌──────────────────────────────────────────┐
-│ [14:32] alice  hey, anyone around?       │
-│ [14:32] bob    yeah what's up            │
-│ [14:33] alice  deploy going out at 3     │
-│ *** carol joined the chat                │
-│ [14:33] carol  i'm here too              │
-│──────────────────────────────────────────│
-│ > _                                      │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│ *** Doomed Crungle the Regrettable joined the chat              │
+│ [14:32] Baron Kragmire Eater of Bees  hey, anyone around?       │
+│ [14:32] Prophet Toadmire the Shameless  yeah what's up          │
+│ [14:33] Baron Kragmire Eater of Bees  deploy going out at 3    │
+│ [14:33] Doomed Crungle the Regrettable  i'm here too            │
+│─────────────────────────────────────────────────────────────────│
+│ > _                                                              │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Install
@@ -38,19 +38,12 @@ cp target/release/office-chat /usr/local/bin/
 office-chat
 ```
 
-That's it. You'll be prompted for a nickname and you're in. Anyone else on the same LAN running `office-chat` sees your messages.
-
-Skip the prompt with a flag:
-
-```bash
-office-chat --nick alice
-```
+That's it. You get a random name and you're in. Every session you're someone new.
 
 ### Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--nick`, `-n` | prompted | Your display name |
 | `--history` | `50` | Number of history messages to load on startup |
 
 ### Controls

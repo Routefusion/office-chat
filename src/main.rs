@@ -5,7 +5,6 @@ mod protocol;
 mod state;
 mod ui;
 
-use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,10 +27,6 @@ const CHANNEL_KEY: &str = "office-chat-lan-channel";
 #[derive(Parser)]
 #[command(name = "office-chat", about = "LAN chat over UDP broadcast")]
 struct Args {
-    /// Your display nickname (prompted if not provided)
-    #[arg(short, long)]
-    nick: Option<String>,
-
     /// Number of history messages to load on startup
     #[arg(long, default_value = "50")]
     history: usize,
@@ -43,18 +38,62 @@ fn data_dir() -> PathBuf {
         .join(".office-chat")
 }
 
-/// Prompt the user for a nickname interactively.
-fn prompt_nick() -> String {
-    print!("Enter your nickname: ");
-    io::stdout().flush().ok();
-    let mut nick = String::new();
-    io::stdin().read_line(&mut nick).expect("failed to read nickname");
-    let nick = nick.trim().to_string();
-    if nick.is_empty() {
-        eprintln!("Nickname cannot be empty.");
-        std::process::exit(1);
-    }
-    nick
+/// Generate a chaotic lore nickname.
+fn random_nick() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+
+    const TITLES: &[&str] = &[
+        "Sir", "Lord", "Saint", "Baron", "Duke", "Count", "Keeper",
+        "Warden", "Prophet", "Herald", "Archon", "Seraph", "Deacon",
+        "Regent", "Vizier", "Abbot", "Thane", "Consul", "Paladin",
+        "Scribe", "Witch", "Sage", "Elder", "Chosen", "Forsaken",
+        "Blessed", "Cursed", "Mad", "Dread", "Feral", "Hollow",
+        "Exalted", "Fallen", "Pale", "Iron", "Void", "Storm",
+        "Blood", "Ghost", "Bone", "Ash", "Grim", "Half-Dead",
+        "Twice-Banished", "Unchained", "Oathless", "Doomed",
+    ];
+
+    const NAMES: &[&str] = &[
+        "Morbius", "Gorthak", "Xylphren", "Bingleton", "Chadwick",
+        "Eldreth", "Fumblor", "Grimbald", "Hextooth", "Inkfang",
+        "Jorbulus", "Kragmire", "Lungsworth", "Mungus", "Norbington",
+        "Oggrick", "Plimbus", "Quagsworth", "Rotgut", "Skumble",
+        "Throckmorton", "Ulgreth", "Vexmoor", "Wormald", "Xanthippos",
+        "Yorbel", "Zymurgo", "Blightwick", "Crungle", "Dankworth",
+        "Festerling", "Gnarlbone", "Humgrove", "Irontaint", "Jibbles",
+        "Krumhorn", "Lumpkin", "Moldric", "Nubsworth", "Orkblat",
+        "Pusgrave", "Quimley", "Ratsworth", "Splotch", "Toadmire",
+        "Ungus", "Vilehorn", "Wretchard", "Xogbog", "Yeastwick",
+        "Zurgle", "Grimshaw", "Bonechill", "Corpseflower", "Doomhollow",
+        "Fleshwick", "Gobbsworth", "Hagraven", "Ironbelly", "Jagsworth",
+        "Knottbeard", "Lichfield", "Mossrot", "Nightsoil", "Oggsworth",
+        "Plagueborn", "Quagmort", "Rottingham", "Skulkgrove", "Tombald",
+    ];
+
+    const SUFFIXES: &[&str] = &[
+        "the Unhinged", "the Damp", "the Inconsolable", "the Girthy",
+        "the Befouled", "the Regrettable", "the Unwiped", "the Eternal",
+        "the Moist", "the Questionable", "the Unbothered", "the Putrid",
+        "the Forgotten", "the Soggy", "the Malodorous", "the Shameless",
+        "the Unfortunate", "of the Swamp", "of the Crypt", "of the Mire",
+        "the Flatulent", "the Incomprehensible", "the Banned",
+        "the Unlicensed", "the Inevitable", "the Unnecessary",
+        "of Dubious Origin", "the Oozing", "the Unwashed", "the Foul",
+        "the Thrice-Divorced", "the Chafed", "the Bloated",
+        "the Unsanctioned", "the Festering", "the Pungent",
+        "Eater of Bees", "Who Dwells Below", "the Perspiring",
+        "the Underpaid", "the Overthinker", "the Mouth-Breather",
+        "the Last of His Name", "the First of Her Crimes",
+        "the Surprisingly Agile", "the Deeply Confused",
+        "Who Must Not Be Microwaved", "the Sentient", "the Fleshy",
+    ];
+
+    let title = TITLES[rng.gen_range(0..TITLES.len())];
+    let name = NAMES[rng.gen_range(0..NAMES.len())];
+    let suffix = SUFFIXES[rng.gen_range(0..SUFFIXES.len())];
+
+    format!("{title} {name} {suffix}")
 }
 
 #[tokio::main]
@@ -62,8 +101,8 @@ async fn main() {
     let args = Args::parse();
     let data = data_dir();
 
-    // Resolve nickname: flag > interactive prompt
-    let nick = args.nick.unwrap_or_else(prompt_nick);
+    // Generate a random lore nickname
+    let nick = random_nick();
 
     // Load or generate signing keypair
     let signing_key: SigningKey = crypto::load_or_generate_keypair(&data.join("keypair.bin"));
